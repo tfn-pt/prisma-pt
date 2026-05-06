@@ -4,6 +4,7 @@ import { Playfair_Display, JetBrains_Mono } from "next/font/google";
 import { motion, AnimatePresence, useAnimation } from "framer-motion";
 import { ExternalLink, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { ARQUIVO_FALLBACK_URL, toSafeExternalUrl } from "@/lib/arquivoLinks";
 import LensChrome from "./LensChrome";
 import { Outfit } from "next/font/google";
 import { TerminalSquare } from "lucide-react";
@@ -267,9 +268,9 @@ function MarqueeRow({
         {doubled.map((node, i) => (
           <a
             key={i}
-            href={node.url}
+            href={toSafeExternalUrl(node.url, ARQUIVO_FALLBACK_URL)}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             // Duplicate half is decorative — hide from AT.
             aria-hidden={i >= massiveBase.length}
             className="group relative flex items-center gap-3 whitespace-nowrap"
@@ -584,7 +585,7 @@ export default function MapTimeline() {
                     items={
                       rowItems.length
                         ? rowItems
-                        : [{ title: "Sem dados", url: "#", type: "traditional" }]
+                        : [{ title: "Sem dados", url: ARQUIVO_FALLBACK_URL, type: "traditional" }]
                     }
                     reverse={idx % 2 !== 0}
                     speed={15 + idx * 4} // kept for prop compat; overridden internally

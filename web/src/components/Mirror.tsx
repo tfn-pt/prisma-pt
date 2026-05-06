@@ -8,6 +8,7 @@ import { Tooltip, useTooltip } from "@visx/tooltip";
 import { AnimatePresence, motion } from "framer-motion";
 import { Activity, Search, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState, type PointerEvent } from "react";
+import { ARQUIVO_FALLBACK_URL, toSafeExternalUrl } from "@/lib/arquivoLinks";
 import LensChrome from "./LensChrome";
 
 const playfair = Playfair_Display({
@@ -684,9 +685,9 @@ export default function Mirror({ data }: { data?: unknown }) {
                     {visibleResult.sampleTitles.slice(0, 4).map((sample) => (
                       <a
                         key={`${sample.title}-${sample.url}`}
-                        href={sample.url || undefined}
+                        href={toSafeExternalUrl(sample.url, ARQUIVO_FALLBACK_URL)}
                         target="_blank"
-                        rel="noreferrer"
+                        rel="noopener noreferrer"
                         className={`
                           ${ease}
                           border-l-2 border-sky-400/50

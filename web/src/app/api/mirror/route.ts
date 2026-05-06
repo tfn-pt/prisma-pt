@@ -1,9 +1,10 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
+import { toSafeExternalUrl } from "@/lib/arquivoLinks";
+import { getArchiveRecords, getMasterData } from "@/lib/masterData";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
 const MIN_SIGNIFICANT_MATCHES = 5;
 const MIN_SIGNIFICANT_YEARS = 2;
 const MIN_QUERY_LENGTH = 3;
@@ -27,7 +28,7 @@ type DatasetCache = {
 let datasetPromise: Promise<DatasetCache> | null = null;
 
 function repairMojibake(value: string) {
-  if (!/[ÃÂâ]/.test(value)) return value.trim();
+  if (!/[ÃƒÃ‚Ã¢]/.test(value)) return value.trim();
   try {
     return Buffer.from(value, "latin1").toString("utf8").trim();
   } catch {
@@ -81,67 +82,23 @@ function buildEmptyResponse(query: string, years: number[], totalsByYear: Map<nu
     lastShare: 0,
     delta: 0,
     relativeChange: null,
-    verdict: "stable",
+    verdict: "stable" as const,
     copy: reason,
     series,
     sampleTitles: [],
   };
 }
 
-function parseCsvLine(line: string) {
-  const cells: string[] = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i];
-    const next = line[i + 1];
-
-    if (char === '"' && inQuotes && next === '"') {
-      current += '"';
-      i += 1;
-    } else if (char === '"') {
-      inQuotes = !inQuotes;
-    } else if (char === "," && !inQuotes) {
-      cells.push(current);
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-
-  cells.push(current);
-  return cells;
-}
-
 async function loadDataset(): Promise<DatasetCache> {
   if (datasetPromise) return datasetPromise;
 
   datasetPromise = (async () => {
-    const primaryCsvPath = path.join(process.cwd(), "..", "data", "dataset_final_enriched.csv");
-    const fallbackCsvPath = path.join(process.cwd(), "..", "data", "dataset_final.csv");
-    let csv: string;
-
-    try {
-      csv = await readFile(primaryCsvPath, "utf-8");
-    } catch {
-      csv = await readFile(fallbackCsvPath, "utf-8");
-    }
-
-    const lines = csv.split(/\r?\n/).filter(Boolean);
-    const header = parseCsvLine(lines[0]);
-    const yearIndex = header.indexOf("year");
-    const titleIndex = header.indexOf("title");
-    const categoryIndex = header.indexOf("job_category");
-    const waybackUrlIndex = header.indexOf("wayback_url");
-    const originalUrlIndex = header.indexOf("original_url");
-
-    if (yearIndex < 0 || titleIndex < 0) {
-      throw new Error("CSV missing required year/title columns.");
-    }
-
+    const [masterData, archiveRecords] = await Promise.all([getMasterData(), getArchiveRecords()]);
+    const years = [...masterData.metadata.years].sort((a, b) => a - b);
+    const totalsByYear = new Map<number, number>(
+      masterData.time_series.yearly_volume.map((row) => [row.year, row.records]),
+    );
     const records: JobRecord[] = [];
-    const totalsByYear = new Map<number, number>();
     const suggestionCounts = new Map<string, { label: string; count: number }>();
 
     function addSuggestion(label: string) {
@@ -156,13 +113,14 @@ async function loadDataset(): Promise<DatasetCache> {
       });
     }
 
-    for (const line of lines.slice(1)) {
-      const cells = parseCsvLine(line);
-      const year = Number(cells[yearIndex]);
-      const title = repairMojibake(cells[titleIndex] ?? "");
-      const category = categoryIndex >= 0 ? repairMojibake(cells[categoryIndex] ?? "") : "";
-      const waybackUrl = waybackUrlIndex >= 0 ? cells[waybackUrlIndex] ?? "" : "";
-      const originalUrl = originalUrlIndex >= 0 ? cells[originalUrlIndex] ?? "" : "";
+    for (const row of masterData.distributions.category) {
+      addSuggestion(row.job_category);
+    }
+
+    for (const record of archiveRecords) {
+      const year = record.year;
+      const title = repairMojibake(record.title ?? "");
+      const category = repairMojibake(record.category ?? "");
 
       if (!Number.isFinite(year) || !title) continue;
 
@@ -172,15 +130,13 @@ async function loadDataset(): Promise<DatasetCache> {
       records.push({
         year,
         title,
-        url: waybackUrl || originalUrl,
+        url: toSafeExternalUrl(record.url),
         category,
         normalizedTitle: normalize(title),
         normalizedCategory: normalize(category),
       });
-      totalsByYear.set(year, (totalsByYear.get(year) ?? 0) + 1);
     }
 
-    const years = Array.from(totalsByYear.keys()).sort((a, b) => a - b);
     const suggestions = Array.from(suggestionCounts.values())
       .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "pt"))
       .slice(0, 50)
@@ -197,14 +153,14 @@ function buildCopy(query: string, firstShare: number, lastShare: number, delta: 
   const end = `${(lastShare * 100).toFixed(1).replace(".", ",")}%`;
 
   if (delta < -0.002) {
-    return `A profissão "${query}" caiu de ${start} para ${end}. Portugal deixou de a recrutar com a mesma força.`;
+    return `A profissÃ£o "${query}" caiu de ${start} para ${end}. Portugal deixou de a recrutar com a mesma forÃ§a.`;
   }
 
   if (delta > 0.002) {
-    return `A profissão "${query}" subiu de ${start} para ${end}. Portugal passou a precisar mais deste trabalho.`;
+    return `A profissÃ£o "${query}" subiu de ${start} para ${end}. Portugal passou a precisar mais deste trabalho.`;
   }
 
-  return `A profissão "${query}" manteve-se perto do mesmo peso: ${start} para ${end}. A mudança é discreta, mas visível no rasto anual.`;
+  return `A profissÃ£o "${query}" manteve-se perto do mesmo peso: ${start} para ${end}. A mudanÃ§a Ã© discreta, mas visÃ­vel no rasto anual.`;
 }
 
 export async function GET(request: Request) {
@@ -275,7 +231,7 @@ export async function GET(request: Request) {
     isSignificant,
     emptyReason: isSignificant
       ? null
-      : "O arquivo não preserva rasto significativo para esta pesquisa.",
+      : "O arquivo nÃ£o preserva rasto significativo para esta pesquisa.",
     firstYear: first?.year ?? null,
     lastYear: last?.year ?? null,
     firstShare,
@@ -285,7 +241,7 @@ export async function GET(request: Request) {
     verdict,
     copy: isSignificant
       ? buildCopy(query, firstShare, lastShare, delta)
-      : "O arquivo não preserva rasto significativo para esta pesquisa.",
+      : "O arquivo nÃ£o preserva rasto significativo para esta pesquisa.",
     series,
     sampleTitles: isSignificant ? sampleTitles : [],
   });

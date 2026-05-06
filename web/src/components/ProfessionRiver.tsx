@@ -14,7 +14,7 @@
  */
 
 import { memo, useId, useMemo, useRef, useState, useCallback } from "react";
-import { AnimatePresence, motion, useMotionValue, useSpring } from "framer-motion";
+import { AnimatePresence, motion, useMotionValue, useSpring, type Variants } from "framer-motion";
 import { Outfit, Playfair_Display } from "next/font/google";
 import { MousePointerClick } from "lucide-react";
 import {
@@ -665,7 +665,9 @@ function BrutalistToggle<T extends string>({
 // Instead of opacity fade, entering view sweeps in via clip-path from left,
 // exiting view is clipped out to the right — cinematic, structural.
 
-const MORPH_VARIANTS = {
+const MORPH_EASE: [number, number, number, number] = [0.76, 0, 0.24, 1];
+
+const MORPH_VARIANTS: Variants = {
   enter: {
     clipPath: "inset(0 100% 0 0)",
     opacity: 0,
@@ -674,7 +676,7 @@ const MORPH_VARIANTS = {
     clipPath: "inset(0 0% 0 0)",
     opacity: 1,
     transition: {
-      clipPath: { duration: 0.55, ease: [0.76, 0, 0.24, 1] },
+      clipPath: { duration: 0.55, ease: MORPH_EASE },
       opacity: { duration: 0.15 },
     },
   },
@@ -682,7 +684,7 @@ const MORPH_VARIANTS = {
     clipPath: "inset(0 0 0 100%)",
     opacity: 0,
     transition: {
-      clipPath: { duration: 0.45, ease: [0.76, 0, 0.24, 1] },
+      clipPath: { duration: 0.45, ease: MORPH_EASE },
       opacity: { duration: 0.3, delay: 0.15 },
     },
   },

@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
+import { toSafeExternalUrl } from "@/lib/arquivoLinks";
+import { getArchiveRecords, getMasterData } from "@/lib/masterData";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -19,7 +19,7 @@ type DatasetCache = {
 let datasetPromise: Promise<DatasetCache> | null = null;
 
 function repairMojibake(value: string) {
-  if (!/[ÃÂâ]/.test(value)) return value.trim();
+  if (!/[ÃƒÃ‚Ã¢]/.test(value)) return value.trim();
   try {
     return Buffer.from(value, "latin1").toString("utf8").trim();
   } catch {
@@ -27,74 +27,26 @@ function repairMojibake(value: string) {
   }
 }
 
-function parseCsvLine(line: string) {
-  const cells: string[] = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i];
-    const next = line[i + 1];
-
-    if (char === '"' && inQuotes && next === '"') {
-      current += '"';
-      i += 1;
-    } else if (char === '"') {
-      inQuotes = !inQuotes;
-    } else if (char === "," && !inQuotes) {
-      cells.push(current);
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-
-  cells.push(current);
-  return cells;
-}
-
 async function loadDataset(): Promise<DatasetCache> {
   if (datasetPromise) return datasetPromise;
 
   datasetPromise = (async () => {
-    const primaryCsvPath = path.join(process.cwd(), "..", "data", "dataset_final_enriched.csv");
-    const fallbackCsvPath = path.join(process.cwd(), "..", "data", "dataset_final.csv");
-    let csv: string;
-
-    try {
-      csv = await readFile(primaryCsvPath, "utf-8");
-    } catch {
-      csv = await readFile(fallbackCsvPath, "utf-8");
-    }
-
-    const lines = csv.split(/\r?\n/).filter(Boolean);
-    const header = parseCsvLine(lines[0]);
-    const yearIndex = header.indexOf("year");
-    const titleIndex = header.indexOf("title");
-    const categoryIndex = header.indexOf("job_category");
-    const waybackUrlIndex = header.indexOf("wayback_url");
-    const originalUrlIndex = header.indexOf("original_url");
-
-    if (yearIndex < 0 || titleIndex < 0) {
-      throw new Error("CSV missing required year/title columns.");
-    }
-
+    const [masterData, archiveRecords] = await Promise.all([getMasterData(), getArchiveRecords()]);
+    const activeYears = new Set(masterData.metadata.years);
     const records: JobRecord[] = [];
 
-    for (const line of lines.slice(1)) {
-      const cells = parseCsvLine(line);
-      const year = Number(cells[yearIndex]);
-      const title = repairMojibake(cells[titleIndex] ?? "");
-      const category = categoryIndex >= 0 ? repairMojibake(cells[categoryIndex] ?? "") : "";
-      const waybackUrl = waybackUrlIndex >= 0 ? cells[waybackUrlIndex] ?? "" : "";
-      const originalUrl = originalUrlIndex >= 0 ? cells[originalUrlIndex] ?? "" : "";
+    for (const record of archiveRecords) {
+      const year = record.year;
+      const title = repairMojibake(record.title ?? "");
+      const category = repairMojibake(record.category ?? "");
 
       if (!Number.isFinite(year) || !title) continue;
+      if (!activeYears.has(year)) continue;
 
       records.push({
         year,
         title,
-        url: waybackUrl || originalUrl,
+        url: toSafeExternalUrl(record.url),
         category,
       });
     }
@@ -115,7 +67,7 @@ function getPeriodKey(year: number): string {
 
 function shuffleArray<T>(array: T[]): T[] {
   const copy = [...array];
-  for (let i = copy.length - 1; i > 0; i--) {
+  for (let i = copy.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
@@ -125,8 +77,6 @@ function shuffleArray<T>(array: T[]): T[] {
 export async function GET() {
   try {
     const dataset = await loadDataset();
-
-    // Group records by period
     const periodGroups: Record<string, JobRecord[]> = {
       "2008_2011": [],
       "2012_2015": [],
@@ -142,17 +92,36 @@ export async function GET() {
       }
     }
 
-    // Extract random samples per period (max 6 per period as in original)
     const SAMPLES_PER_PERIOD = 6;
     const archiveSamples: Record<string, Array<{ title: string; url: string; type: "tech" | "traditional" }>> = {};
 
     for (const [period, records] of Object.entries(periodGroups)) {
       const shuffled = shuffleArray(records);
       const samples = shuffled.slice(0, SAMPLES_PER_PERIOD).map((record) => {
-        // Heuristic: detect if it's a tech job by keywords
-        const techKeywords = ["programador", "developer", "engineer", "designer", "data", "analyst", "architect", "cloud", "cybersecurity", "product", "ai", "prompt", "software", "frontend", "backend", "fullstack", "remote", "tech"];
-        const isTech = techKeywords.some((keyword) =>
-          record.title.toLowerCase().includes(keyword) || record.category.toLowerCase().includes(keyword)
+        const techKeywords = [
+          "programador",
+          "developer",
+          "engineer",
+          "designer",
+          "data",
+          "analyst",
+          "architect",
+          "cloud",
+          "cybersecurity",
+          "product",
+          "ai",
+          "prompt",
+          "software",
+          "frontend",
+          "backend",
+          "fullstack",
+          "remote",
+          "tech",
+        ];
+        const isTech = techKeywords.some(
+          (keyword) =>
+            record.title.toLowerCase().includes(keyword) ||
+            record.category.toLowerCase().includes(keyword),
         );
 
         return {
@@ -165,14 +134,9 @@ export async function GET() {
       archiveSamples[period] = samples;
     }
 
-    return NextResponse.json({
-      archiveSamples,
-    });
+    return NextResponse.json({ archiveSamples });
   } catch (error) {
     console.error("MapTimeline API Error:", error);
-    return NextResponse.json(
-      { error: "Failed to load archive data" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to load archive data" }, { status: 500 });
   }
 }
